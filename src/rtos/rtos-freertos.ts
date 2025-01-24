@@ -248,7 +248,8 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
             }
         });
     }
-    private updateCurrentsThreadAddr(frameId: number): Promise<void> {
+    // pxCurrentTCBs store the currently running thread. use it determine thread status
+    private updateThreadAddrInCurrentTCBs(frameId: number): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             if (this.pxCurrentTCBs !== null) {
                 this.pxCurrentTCBs?.getValue(frameId).then(
@@ -323,7 +324,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                                 promises.push(this.getThreadInfo(v.variablesReference, 'READY', frameId));
                             }
                             promises.push(this.updateCurrentThreadAddr(frameId));
-                            promises.push(this.updateCurrentsThreadAddr(frameId));
+                            promises.push(this.updateThreadAddrInCurrentTCBs(frameId));
                             promises.push(this.updateTotalRuntime(frameId));
                             // Update in bulk, but broken up into three chunks, if the number of threads are already fulfilled, then
                             // not much happens
@@ -438,7 +439,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                                 mySetter(DisplayFields.Status, threadRunning ? 'RUNNING' : state);
                             } else {
                                 const xTaskRunState = thInfo['xTaskRunState']?.val;
-                                if (xTaskRunState !== undefined) {
+                                if (xTaskRunState !== undefined) { // some freertos not use it,then it is undefined
                                     if (xTaskRunState === '-2') {
                                         threadRunning = false;
                                         mySetter(DisplayFields.Status, 'YIELD');
@@ -462,7 +463,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                                         if (!threadRunning) {
                                             mySetter(DisplayFields.Status, state);
                                         }
-                                    } else {
+                                    } else { // no pxCurrentTCB, no pxCurrentTCBs, no xTaskRunState
                                         threadRunning = false;
                                         mySetter(DisplayFields.Status, 'UNKNOWN');
                                     }
