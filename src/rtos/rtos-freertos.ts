@@ -19,7 +19,7 @@ enum DisplayFields {
     StackUsed,
     StackFree,
     StackPeak,
-    Runtime
+    Runtime,
 }
 
 const numType = RTOSCommon.ColTypeEnum.colTypeNumeric;
@@ -29,7 +29,7 @@ FreeRTOSItems[DisplayFields[DisplayFields.Address]] = {
     width: 3,
     headerRow1: 'Thread',
     headerRow2: 'Address',
-    colGapBefore: 1
+    colGapBefore: 1,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.TaskName]] = { width: 4, headerRow1: '', headerRow2: 'Task Name' };
 FreeRTOSItems[DisplayFields[DisplayFields.Status]] = { width: 3, headerRow1: '', headerRow2: 'Status' };
@@ -37,14 +37,14 @@ FreeRTOSItems[DisplayFields[DisplayFields.Priority]] = {
     width: 1.5,
     headerRow1: 'Prio',
     headerRow2: 'rity',
-    colType: numType
+    colType: numType,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.StackStart]] = {
     width: 3,
     headerRow1: 'Stack',
     headerRow2: 'Start',
     colType: RTOSCommon.ColTypeEnum.colTypeLink,
-    colGapBefore: 1
+    colGapBefore: 1,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.StackTop]] = { width: 3, headerRow1: 'Stack', headerRow2: 'Top' };
 FreeRTOSItems[DisplayFields[DisplayFields.StackEnd]] = { width: 3, headerRow1: 'Stack', headerRow2: 'End' };
@@ -52,31 +52,31 @@ FreeRTOSItems[DisplayFields[DisplayFields.StackSize]] = {
     width: 2,
     headerRow1: 'Stack',
     headerRow2: 'Size',
-    colType: numType
+    colType: numType,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.StackUsed]] = {
     width: 2,
     headerRow1: 'Stack',
     headerRow2: 'Used',
-    colType: numType
+    colType: numType,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.StackFree]] = {
     width: 2,
     headerRow1: 'Stack',
     headerRow2: 'Free',
-    colType: numType
+    colType: numType,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.StackPeak]] = {
     width: 2,
     headerRow1: 'Stack',
     headerRow2: 'Peak',
-    colType: numType
+    colType: numType,
 };
 FreeRTOSItems[DisplayFields[DisplayFields.Runtime]] = {
     width: 2,
     headerRow1: '',
     headerRow2: 'Runtime',
-    colType: numType
+    colType: numType,
 };
 const DisplayFieldNames: string[] = Object.keys(FreeRTOSItems);
 
@@ -92,6 +92,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
     private xPendingReadyList: RTOSCommon.RTOSVarHelperMaybe;
     private pxCurrentTCB: RTOSCommon.RTOSVarHelperMaybe;
     private pxCurrentTCBs: RTOSCommon.RTOSVarHelperMaybe;
+    private pxCurrentTCBsNum = 0;
     private xSuspendedTaskList: RTOSCommon.RTOSVarHelperMaybe;
     private xTasksWaitingTermination: RTOSCommon.RTOSVarHelperMaybe;
     private ulTotalRunTime: RTOSCommon.RTOSVarHelperMaybe;
@@ -99,6 +100,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
 
     private stale = true;
     private curThreadInfo = 0; // address (from pxCurrentTCB) of status (when multicore)
+    private curThreadInfos: number[] = []; //address (from pxCurrentTCBs) of status of all threads (when multicore)
     private foundThreads: RTOSCommon.RTOSThreadInfo[] = [];
     private finalThreads: RTOSCommon.RTOSThreadInfo[] = [];
     private timeInfo = '';
@@ -202,11 +204,15 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                 if (!this.ulTotalRunTime) {
                     ret += /*html*/ `<br>Missing Runtime stats..:<br>
                     /* To get runtime stats, modify the following macro in FreeRTOSConfig.h */<br>
-                    #define ${strong('configGENERATE_RUN_TIME_STATS')}             1 /* 1: generate runtime statistics; 0: no runtime statistics */<br>
+                    #define ${strong(
+                        'configGENERATE_RUN_TIME_STATS'
+                    )}             1 /* 1: generate runtime statistics; 0: no runtime statistics */<br>
                     /* Also, add the following two macros to provide a high speed counter -- something at least 10x faster than<br>
                     ** your RTOS scheduler tick. One strategy could be to use a HW counter and sample its current value when needed<br>
                     */<br>
-                    #define ${strong('portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()')} /* Define this to initialize your timer/counter */<br>
+                    #define ${strong(
+                        'portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()'
+                    )} /* Define this to initialize your timer/counter */<br>
                     #define ${strong('portGET_RUN_TIME_COUNTER_VALUE()')}${'&nbsp'.repeat(9)}
                     /* Define this to sample the timer/counter */<br>
                     `;
@@ -231,6 +237,39 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                 this.pxCurrentTCB?.getValue(frameId).then(
                     (ret) => {
                         this.curThreadInfo = parseInt(ret || '');
+                        resolve();
+                    },
+                    (e) => {
+                        reject(e);
+                    }
+                );
+            } else {
+                resolve();
+            }
+        });
+    }
+    // pxCurrentTCBs store the currently running thread. use it determine thread status
+    private updateThreadAddrInCurrentTCBs(frameId: number): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            if (this.pxCurrentTCBs !== null) {
+                this.pxCurrentTCBs?.getValue(frameId).then(
+                    (ret) => {
+                        if (ret !== undefined) {
+                            const match = ret.match(/\d+/);
+                            this.pxCurrentTCBsNum = match ? parseInt(match[0]) : 0;
+                        } else {
+                            this.pxCurrentTCBsNum = 0;
+                        }
+                        for (let i = 0; i < this.pxCurrentTCBsNum; i++) {
+                            this.getExprVal('pxCurrentTCBs[' + i + ']', frameId).then(
+                                (ret) => {
+                                    this.curThreadInfos[i] = parseInt(ret || '');
+                                },
+                                (e) => {
+                                    reject(e);
+                                }
+                            );
+                        }
                         resolve();
                     },
                     (e) => {
@@ -285,6 +324,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                                 promises.push(this.getThreadInfo(v.variablesReference, 'READY', frameId));
                             }
                             promises.push(this.updateCurrentThreadAddr(frameId));
+                            promises.push(this.updateThreadAddrInCurrentTCBs(frameId));
                             promises.push(this.updateTotalRuntime(frameId));
                             // Update in bulk, but broken up into three chunks, if the number of threads are already fulfilled, then
                             // not much happens
@@ -371,16 +411,20 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                         for (let thIx = 0; thIx < threadCount; thIx++) {
                             const element = (await this.getVarChildrenObj(curRef, 'pxPrevious')) || {};
                             const threadId = parseInt(element['pvOwner']?.val);
+                            if (threadId === 0) {
+                                console.log('Skipping thread with id 0');
+                                continue;
+                            }
                             const thInfo = await this.getExprValChildrenObj(
                                 `((TCB_t*)${RTOSCommon.hexFormat(threadId)})`,
                                 frameId
                             );
-                            let threadRunning : boolean;
+                            let threadRunning: boolean;
                             const tmpThName =
                                 (await this.getExprVal('(char *)' + thInfo['pcTaskName']?.exp, frameId)) || '';
                             const match = tmpThName.match(/"([^*]*)"$/);
                             const thName = match ? match[1] : tmpThName;
-                            const stackInfo = await this.getStackInfo(thInfo, 0xA5);
+                            const stackInfo = await this.getStackInfo(thInfo, 0xa5);
                             // This is the order we want stuff in
                             const display: { [key: string]: RTOSCommon.DisplayRowItem } = {};
                             const mySetter = (x: DisplayFields, text: string, value?: any) => {
@@ -395,17 +439,37 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                                 mySetter(DisplayFields.Status, threadRunning ? 'RUNNING' : state);
                             } else {
                                 const xTaskRunState = thInfo['xTaskRunState']?.val;
-                                if (xTaskRunState === '-2') {
-                                    threadRunning = false;
-                                    mySetter(DisplayFields.Status, 'YIELD');
-                                }else if (xTaskRunState === '-1') {
-                                    threadRunning = false;
-                                    mySetter(DisplayFields.Status, state);
+                                if (xTaskRunState !== undefined) { // some freertos not use it,then it is undefined
+                                    if (xTaskRunState === '-2') {
+                                        threadRunning = false;
+                                        mySetter(DisplayFields.Status, 'YIELD');
+                                    } else if (xTaskRunState === '-1') {
+                                        threadRunning = false;
+                                        mySetter(DisplayFields.Status, state);
+                                    } else {
+                                        threadRunning = true;
+                                        mySetter(DisplayFields.Status, 'RUNNING(' + xTaskRunState + ')');
+                                    }
                                 } else {
-                                    threadRunning = true;
-                                    mySetter(DisplayFields.Status, 'RUNNING(' + xTaskRunState + ')');
+                                    if (this.pxCurrentTCBs !== null) {
+                                        threadRunning = false;
+                                        for (const num in this.curThreadInfos) {
+                                            if (this.curThreadInfos[num] === threadId) {
+                                                threadRunning = true;
+                                                mySetter(DisplayFields.Status, 'RUNNING(' + num + ')');
+                                                break;
+                                            }
+                                        }
+                                        if (!threadRunning) {
+                                            mySetter(DisplayFields.Status, state);
+                                        }
+                                    } else { // no pxCurrentTCB, no pxCurrentTCBs, no xTaskRunState
+                                        threadRunning = false;
+                                        mySetter(DisplayFields.Status, 'UNKNOWN');
+                                    }
                                 }
                             }
+
                             mySetter(DisplayFields.StackStart, RTOSCommon.hexFormat(stackInfo.stackStart));
                             mySetter(DisplayFields.StackTop, RTOSCommon.hexFormat(stackInfo.stackTop));
                             mySetter(
@@ -429,8 +493,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
 
                             if (RTOSCommon.RTOSBase.disableStackPeaks) {
                                 mySetter(DisplayFields.StackPeak, '---');
-                            }
-                            else {
+                            } else {
                                 mySetter(DisplayFields.StackPeak, func(stackInfo.stackPeak));
                             }
 
@@ -443,7 +506,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
                             const thread: RTOSCommon.RTOSThreadInfo = {
                                 display: display,
                                 stackInfo: stackInfo,
-                                running: threadRunning
+                                running: threadRunning,
                             };
                             this.foundThreads.push(thread);
                             this.createHmlHelp(thread, thInfo);
@@ -467,7 +530,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
         const pxEndOfStack = thInfo['pxEndOfStack']?.val;
         const stackInfo: RTOSCommon.RTOSStackInfo = {
             stackStart: parseInt(pxStack),
-            stackTop: parseInt(pxTopOfStack)
+            stackTop: parseInt(pxTopOfStack),
         };
         const stackDelta = Math.abs(stackInfo.stackTop - stackInfo.stackStart);
         if (this.stackIncrements < 0) {
@@ -487,7 +550,7 @@ export class RTOSFreeRTOS extends RTOSCommon.RTOSBase {
             if (!RTOSCommon.RTOSBase.disableStackPeaks) {
                 const memArg: DebugProtocol.ReadMemoryArguments = {
                     memoryReference: RTOSCommon.hexFormat(Math.min(stackInfo.stackStart, stackInfo.stackEnd)),
-                    count: stackInfo.stackSize
+                    count: stackInfo.stackSize,
                 };
                 try {
                     const stackData = await this.session.customRequest('readMemory', memArg);
